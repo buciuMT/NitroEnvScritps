@@ -1,0 +1,36 @@
+FROM ubuntu:24.04
+
+WORKDIR /tmp
+
+USER root
+
+RUN apt-get -y update && apt-get -y upgrade && apt-get -y install \
+  python3-full python3-pip pipenv curl git nano-tiny tzdata unzip less texlive-xetex pandoc \
+  vim-tiny openssh-client texlive-fonts-recommended texlive-plain-generic xclip fonts-liberation &&\
+  apt-get clean && rm -rf /var/lib/apt/lists/*
+
+
+
+ENV PYTHONUNBUFFERED=1
+RUN python3 -m venv /env
+ENV PATH="/env/bin/:$PATH"
+
+COPY requirements.txt requirements.txt
+
+RUN pip install --no-cache-dir -Ur requirements.txt
+
+RUN rm -rf requirements.txt && useradd work -d /work/workdir
+
+
+COPY prerun/ ./prerun/
+
+RUN sh exec.sh & rm -rf ./*
+
+USER work
+WORKDIR /work/workdir
+
+
+RUN jupyter server --generate-config && \
+  jupyter lab clean 
+
+RUN ls -a /work
