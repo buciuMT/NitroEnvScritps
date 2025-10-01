@@ -21,6 +21,11 @@ RUN pip install --no-cache-dir --requirement requirements.txt && \
   fix-permissions "${CONDA_DIR}" && \
   fix-permissions "/home/${NB_USER}"
 
+RUN rm requirements.txt
+
+COPY prerun/ prerun/
+
+RUN for i in prerun/*.py; do python "$i"; done && rm -rf prerun
 
 USER ${NB_UID}
 

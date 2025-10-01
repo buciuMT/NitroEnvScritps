@@ -5,6 +5,14 @@ import shutil
 import winapps
 import platform
 
+DESKTOP=desktop = os.path.expanduser("~/Desktop")
+
+
+IMAGE={
+    "url": None,
+    "file": "image"
+}
+
 APPS = {
     "winget": {
         "check": "winget",
@@ -12,13 +20,20 @@ APPS = {
         "installer": None,
         "silent": None,
     },
-    "docker": {
-        "check": "DockerDesktop",
-        "winget": "Docker.DockerDesktop",
-        "installer": "docker.exe",
-        "url": "https://desktop.docker.com/win/main/amd64/204649/Docker%20Desktop%20Installer.exe",
-        "silent": "install --quiet",
+    "podman": {
+        "check": "podman",
+        "winget": "RedHat.Podman",
+        "installer": "podman-setup.exe",
+        "url": None,
+        "silent": "/S",
     },
+ #   "docker": {
+ #       "check": "DockerDesktop",
+ #       "winget": "Docker.DockerDesktop",
+ #       "installer": "docker.exe",
+ #       "url": "https://desktop.docker.com/win/main/amd64/204649/Docker%20Desktop%20Installer.exe",
+ #       "silent": "install --quiet",
+ #   },
     "vscode": {
         "check": "code",
         "winget": "Microsoft.VisualStudioCode",
@@ -36,7 +51,7 @@ APPS = {
 }
 
 
-def run_cmd(cmd):
+def run_cmd(cmd:str):
     try:
         subprocess.run(cmd, check=True, shell=True)
         return True
@@ -78,8 +93,7 @@ def ensure_winget():
     return run_cmd(f"powershell -Command \"{ps_cmd}\"")
 
 def install_wsl():
-
-    return run_cmd("wsl --set-default-version 2") and run_cmd("runas wsl --install --no-distribution") 
+    return run_cmd("wsl --install --no-distribution") and run_cmd("wsl --set-default-version 2")
 
 # Based on [https://github.com/almogopp/WSL-Offline-Installer], the copyright notice is a comment;
 def install_wsl_offline():
@@ -163,16 +177,27 @@ Write-Host "Installation complete! WSL setup is done." -ForegroundColor Green
     return True
 
 
-def main():
-    if not ensure_winget():
-        print("Failed to install winget. Exiting.")
-        return
+def vscode_setup()->bool:
+    cmds=[
+        "code --install-extension ms-toolsai.jupyter --force",
+        "code --install-extension ms-python.python --force",
+        "code --install-extension ms-python.vscode-pylance --force"
+    ]
+    for cmd in cmds:
+        if not run_cmd(cmd):
+            return False
+    return True
 
+def main():
     print("\nChecking wsl ...") 
     if not is_installed("wsl",shCheck=False):
         print("Installing wsl")
         if not install_wsl():
             print("Failed to install WSL. Please install manually.")
+
+    if not ensure_winget():
+        print("Failed to install winget. Exiting.")
+        return
 
     for app, info in APPS.items():
         print(f"\nChecking {app}...")
@@ -191,6 +216,14 @@ def main():
         else:
             print(f"Failed to install {app}. Please install manually.")
 
+        print("Installing vscode extensions...")
+        if not vscode_setup():
+            print("Failed to install the required vscode extensions")
+
+        print("Extracting the image")
+
+
+        
 
 if __name__ == "__main__":
     main()

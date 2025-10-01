@@ -1,0 +1,1 @@
+podman kill -a

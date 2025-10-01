@@ -1,0 +1,12 @@
+@echo off
+color a
+set img={}
+echo Initializing podman
+podman machine init
+echo Starting Machine
+podman machine start
+echo Loading Image
+podman image load %img%
+echo Restarting
+del img
+shutdown /s /t 5
