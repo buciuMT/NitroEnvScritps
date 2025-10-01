@@ -216,11 +216,12 @@ def main():
         else:
             print(f"Failed to install {app}. Please install manually.")
 
-        print("Installing vscode extensions...")
-        if not vscode_setup():
-            print("Failed to install the required vscode extensions")
+    print("Installing vscode extensions...")
+    if not vscode_setup():
+        print("Failed to install the required vscode extensions")
 
-        print("Extracting the image")
+    print("Extracting the image")
+    run_cmd("./zi")
 
 
         
