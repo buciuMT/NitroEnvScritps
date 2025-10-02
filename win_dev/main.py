@@ -1,16 +1,111 @@
-
 import os
+import time
 import subprocess
 import shutil
-import winapps
 import platform
+import winapps
 
-DESKTOP=desktop = os.path.expanduser("~/Desktop")
+STOP_SCRIT='''
+podman kill -a
+'''
 
+START_SCRIPT='''
+@echo off
+
+podman machine start
+
+for /f "tokens=*" %%a in ('podman run -d -p "8888:8888" "{}"') do set notebook=%%a
+
+timeout 10 /nobreak
+
+for /f "tokens=*" %%a in ('podman logs %notebook% 2^>^&1 ^| findstr "http://127.0.0.1:8888"') do set JUPYTER_URL=%%a
+
+
+start "" "%JUPYTER_URL%"
+
+'''
+
+STAGE2_SCRIPT='''
+@echo off
+color a
+echo Initializing podman...
+podman machine init
+echo Starting Machine...
+podman machine start
+echo Loading Image...
+echo This can take a long time ...
+{}
+echo Restarting...
+shutdown /r /t 5
+(goto) 2>nul & del "%~f0"
+'''
+
+DEFAULT_CONFIG = {
+    "OfflineInstall": False,
+    "Vscode": True,
+    "PyCharm": True,
+    "LocalImage": False,
+}
+
+COMPETITION_CONFIG = {
+    "OfflineInstall": True,
+    "Vscode": True,
+    "PyCharm": True,
+    "LocalImage": True,
+}
+
+def log(msg):
+    with open('install.log','a') as w:
+        w.write(msg+'\n')
+        print(msg)
+
+def fileWrite(path:str,format:str,*args):
+    with open(path,'w') as w:
+        w.write(format.format(*args))
+
+def config_custom():
+    config = {}
+    for key in DEFAULT_CONFIG:
+        while True:
+            val = input(f"{key} (yes/no) [default={'yes' if DEFAULT_CONFIG[key] else 'no'}]: ").strip().lower()
+            if val in ["true", "yes", "y"]:
+                config[key] = True
+                break
+            elif val in ["false", "no", "n"]:
+                config[key] = False
+                break
+            elif val == "":
+                config[key] = DEFAULT_CONFIG[key]
+                break
+            else:
+                log("Please enter yes, no, y, n, or press Enter for default.")
+    return config
+
+def configuration():
+    log("Choose configuration mode:")
+    log("1. Default")
+    log("2. Competition")
+    log("3. Custom")
+    
+    choice = input("Enter choice [1/2/3]: ").strip()
+
+    if choice == "1":
+        return DEFAULT_CONFIG
+    elif choice == "2":
+        return COMPETITION_CONFIG
+    elif choice == "3":
+        return config_custom()
+    else:
+        log("Invalid choice, using Default config.")
+        return DEFAULT_CONFIG
+
+DESKTOP = os.path.expanduser("~/Desktop")
+STARTUP=os.path.expanduser("~/AppData/Roaming/Microsoft/Windows/Start Menu/Programs/Startup/")
 
 IMAGE={
-    "url": None,
-    "file": "image"
+    "url": "docker.io/lpxt9fz5f/nitro_simple:latest",
+    "file": "img/nitro_img.zip",
+    "name":"nitro_base",
 }
 
 APPS = {
@@ -24,16 +119,9 @@ APPS = {
         "check": "podman",
         "winget": "RedHat.Podman",
         "installer": "podman-setup.exe",
-        "url": None,
+        "url": "https://github.com/containers/podman/releases/download/v5.6.1/podman-5.6.1-setup.exe",
         "silent": "/S",
     },
- #   "docker": {
- #       "check": "DockerDesktop",
- #       "winget": "Docker.DockerDesktop",
- #       "installer": "docker.exe",
- #       "url": "https://desktop.docker.com/win/main/amd64/204649/Docker%20Desktop%20Installer.exe",
- #       "silent": "install --quiet",
- #   },
     "vscode": {
         "check": "code",
         "winget": "Microsoft.VisualStudioCode",
@@ -50,6 +138,27 @@ APPS = {
     },
 }
 
+def setup_stage2(config):
+    log("Setting up stage 2 ...")
+    image_name=IMAGE['url'] if not config['LocalImage'] else IMAGE['name']
+    if config['LocalImage']:
+        log("Extracting the image ...")
+        if not run_cmd(f'"{os.path.join(os.getcwd(),"7zip/7za.exe")}" e {IMAGE["file"]} -o"{DESKTOP}"'):
+            log("Failed to extract the image")
+            return False
+    log("Adding the start and stop scripts...")
+    if not (fileWrite(os.path.join(DESKTOP,"start_jupyter.bat"),START_SCRIPT,image_name) and fileWrite(os.path.join(DESKTOP,"start_jupyter.bat"),STOP_SCRIT)):
+        log("Failed to copy second image")
+        return False 
+    command=None
+    if config['LocalImage']:
+        command=f'podman image load --input "{os.path.join(DESKTOP,image_name)}"'
+    else:
+        command=f'podman pull "{image_name}"'
+    log("Writing the Startup stage2")
+    fileWrite(os.path.join(STARTUP,'stage2.bat'),STAGE2_SCRIPT,command)
+    return True 
+
 
 def run_cmd(cmd:str):
     try:
@@ -63,7 +172,7 @@ def is_installed(name,shCheck=True):
     if shCheck and shutil.which(name):
         return True
     for app in winapps.list_installed():
-        print(f"DEBUG: {app.name}")
+        log(f"DEBUG: {app.name}")
         if name.lower() in app.name.lower():
             return True
     return False
@@ -71,7 +180,7 @@ def is_installed(name,shCheck=True):
 
 def install_offline(filename, silent_flags=None):
     if os.path.exists(filename):
-        print(f"Installing from {filename}...")
+        log(f"Installing from {filename}...")
         cmd = f'"{filename}" {silent_flags}' if silent_flags else f'"{filename}"'
         return run_cmd(cmd)
     return False
@@ -81,26 +190,58 @@ def install_offline(filename, silent_flags=None):
 def install_winget(winget_id):
     if not winget_id:
         return False
-    print(f"Installing {winget_id} via winget...")
-    return run_cmd(f"winget install -e --id {winget_id} -h")
+    log(f"Installing {winget_id} via winget...")
+    return run_cmd(f"winget install --accept-source-agreements --accept-package-agreements -e --id {winget_id} -h ")
 
 
 def ensure_winget():
     if shutil.which("winget"):
         return True
-    print("Winget not found. Installing...")
+    log("Winget not found. Installing...")
     ps_cmd = "irm asheroto.com/winget | iex"
-    return run_cmd(f"powershell -Command \"{ps_cmd}\"")
+    res=run_cmd(f"powershell -Command \"{ps_cmd}\"")
+    if res:
+        time.sleep(2)
+    return res
+
+def install_app_offline(app,info,retry=True):
+    log(f"{app} not found. Trying offline installer...")
+    if info.get("installer") and install_offline(info["installer"], info.get("silent")):
+        log(f"{app} installed from offline installer.")
+        return True
+    if retry:
+        return install_app_online(app,info,retry=False)
+    return False
+def install_app_online(app,info,retry=True):
+    if not ensure_winget():
+        log("Failed to install winget.")
+        return False
+    log(f"Trying winget for {app}...")
+    if info.get("winget") and install_winget(info["winget"]):
+        log(f"{app} installed via winget.")
+        return True
+    else:
+        log(f"Failed to install {app}. Please install manually.")
+        return False
+
+def intall_app(app,info,online):
+    log(f"\nChecking {app}...")
+    if is_installed(info["check"]):
+        log(f"{app} is already installed.")
+        return True
+    if online:
+        return install_app_online(app,info)
+    return install_app_offline(app,info)
 
 def install_wsl():
     return run_cmd("wsl --install --no-distribution") and run_cmd("wsl --set-default-version 2")
 
 # Based on [https://github.com/almogopp/WSL-Offline-Installer], the copyright notice is a comment;
 def install_wsl_offline():
-    print("WSL not found. Preparing offline installation...")
+    log("WSL not found. Preparing offline installation...")
     distro_path = "distro.appx"
     if not os.path.exists(distro_path):
-        print("Invalid path provided. Aborting WSL setup.")
+        log("Invalid path provided. Aborting WSL setup.")
         return False
 
     try:
@@ -108,7 +249,7 @@ def install_wsl_offline():
     except Exception:
         os_caption = platform.release()
 
-    print(f"Detected OS: {os_caption}")
+    log(f"Detected OS: {os_caption}")
 
     if "Windows Server 2019" in os_caption or "Windows Server 2022" in os_caption:
         run_cmd("powershell -Command \"Install-WindowsFeature -Name Microsoft-Windows-Subsystem-Linux\"")
@@ -119,7 +260,7 @@ def install_wsl_offline():
     elif "Windows 11" in os_caption:
         run_cmd("wsl --install")
     else:
-        print("This script supports only Windows Server 2019, 2022, Windows 10 or 11.")
+        log("This script supports only Windows Server 2019, 2022, Windows 10 or 11.")
         return False
 
     # https://github.com/almogopp/WSL-Offline-Installer/blob/main/WSL-Offline-Install.ps1
@@ -189,39 +330,36 @@ def vscode_setup()->bool:
     return True
 
 def main():
-    print("\nChecking wsl ...") 
+    config=configuration()
+    log("\nChecking wsl ...") 
     if not is_installed("wsl",shCheck=False):
-        print("Installing wsl")
+        log("Installing wsl")
         if not install_wsl():
-            print("Failed to install WSL. Please install manually.")
+            log("Failed to install WSL. Please install manually.")
+            log("Exiting")
+            return
 
-    if not ensure_winget():
-        print("Failed to install winget. Exiting.")
+    if not intall_app('Podman',APPS['podman'],online=not config["OfflineInstall"]):
+        log("Failed to install WSL. Please install manually.")
+        log("Exiting")
         return
 
-    for app, info in APPS.items():
-        print(f"\nChecking {app}...")
-        if is_installed(info["check"]):
-            print(f"{app} is already installed.")
-            continue
+    if not intall_app('PyCharm',APPS["pycharm"],online=not config["OfflineInstall"]):
+        log("Failed to install PyCharm. Continuing...")
+    if intall_app("VsCode",APPS["vscode"],online=not config["OfflineInstall"]):
+        log("Installing vscode extensions...")
+        time.sleep(3)
+        if not vscode_setup():
+            log("Failed to install the required vscode extensions")
+    else:
+        log("Failed to install VsCode. Continuing...")    
+    if not setup_stage2(config):
+        log("failed setting up stage 2")
+        log("Please restart and intervene manually")
+    log("The computer is about to restart, if it does not restart in 10 seconds please restart it manually")
+    _=run_cmd("shutdown /r /t 5")
 
-        print(f"{app} not found. Trying offline installer...")
-        if info.get("installer") and install_offline(info["installer"], info.get("silent")):
-            print(f"{app} installed from offline installer.")
-            continue
 
-        print(f"Trying winget for {app}...")
-        if info.get("winget") and install_winget(info["winget"]):
-            print(f"{app} installed via winget.")
-        else:
-            print(f"Failed to install {app}. Please install manually.")
-
-    print("Installing vscode extensions...")
-    if not vscode_setup():
-        print("Failed to install the required vscode extensions")
-
-    print("Extracting the image")
-    run_cmd("./zi")
 
 
         
